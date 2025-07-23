@@ -165,6 +165,40 @@ response = requests.post('http://localhost:8019/generate_music_direct', json=dat
 
 For more details, see `docs/LEGACY_COMPATIBILITY.md`.
 
+## 🔄 ACE-Server.py Compatibility
+
+**ACE-Step-directAPI is fully compatible with the original `ace_server.py` `/generate` endpoint!**
+
+### Drop-in Replacement
+
+Replace your `ace_server.py` usage with ACE-Step-directAPI:
+
+```python
+# Original ace_server.py
+ace_url = "http://127.0.0.1:64756/generate"
+response = requests.post(ace_url, data=form_data)
+
+# ACE-Step-directAPI (Direct Mode)
+ace_url = "http://127.0.0.1:8019/generate_music_direct"
+response = requests.post(ace_url, json=json_data)
+
+# ACE-Step-directAPI (Legacy Async Mode)
+ace_url = "http://127.0.0.1:8019/generate_music"
+response = requests.post(ace_url, json=json_data)
+```
+
+### Compatible Examples
+
+```bash
+# Test ace_server.py compatibility
+python examples/ace_server_compatibility.py
+
+# Test music.py compatibility (momo_song2_yutub project)
+python examples/music_py_compatibility.py
+```
+
+For detailed migration guide, see `examples/README_ACE_SERVER_COMPATIBILITY.md`.
+
 ## 📈 Performance Comparison
 
 | Mode | Disk I/O | Memory Usage | Response Time | File Management |

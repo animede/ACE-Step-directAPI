@@ -15,6 +15,7 @@ from queue import Queue
 from typing import Optional, List, Dict
 from dataclasses import dataclass
 from enum import Enum
+from contextlib import asynccontextmanager
 from fastapi import FastAPI, HTTPException, File, UploadFile, Form
 from fastapi.responses import Response
 from pydantic import BaseModel
@@ -25,7 +26,16 @@ import base64
 from acestep.pipeline_ace_step import ACEStepPipeline
 from acestep.data_sampler import DataSampler
 
-app = FastAPI(title="ACE-Step Gradio Compatible API")
+@asynccontextmanager
+async def lifespan(app: FastAPI):
+    """FastAPI lifespan event handler"""
+    # Startup
+    asyncio.create_task(background_worker())
+    yield
+    # Shutdown (if needed)
+    pass
+
+app = FastAPI(title="ACE-Step Gradio Compatible API", lifespan=lifespan)
 
 class RequestStatus(Enum):
     PENDING = "pending"
@@ -159,13 +169,19 @@ def initialize_pipeline(
     device_id: int = 0,
     bf16: bool = True,
     torch_compile: bool = False,
-    cpu_offload: bool = False,
+    cpu_offload: bool = True,  # メモリ不足対策でデフォルトでCPUオフロードを有効化
     overlapped_decode: bool = False
 ):
     """Gradioアプリと同じ方法でパイプラインを初期化"""
     global model_demo, data_sampler
     
     os.environ["CUDA_VISIBLE_DEVICES"] = str(device_id)
+    
+    # メモリクリア
+    import torch
+    if torch.cuda.is_available():
+        torch.cuda.empty_cache()
+        print(f"CUDA memory before initialization: {torch.cuda.memory_allocated() / 1024**3:.2f} GB")
     
     model_demo = ACEStepPipeline(
         checkpoint_dir=checkpoint_path,
@@ -176,6 +192,9 @@ def initialize_pipeline(
         disable_progress_bar=True
     )
     data_sampler = DataSampler()
+    
+    if torch.cuda.is_available():
+        print(f"CUDA memory after initialization: {torch.cuda.memory_allocated() / 1024**3:.2f} GB")
     
     return model_demo, data_sampler
 
@@ -703,11 +722,6 @@ async def sample_data():
     except Exception as e:
         return {"success": False, "error_message": str(e)}
 
-@app.on_event("startup")
-async def startup_event():
-    """サーバー起動時にバックグラウンドワーカーを開始"""
-    asyncio.create_task(background_worker())
-
 @app.post("/generate_music_with_audio")
 async def generate_music_with_audio(
     audio_file: UploadFile = File(..., description="MP3 audio file"),
@@ -1231,32 +1245,202 @@ async def generate_music_with_audio_direct_mp3(
     except Exception as e:
         raise HTTPException(status_code=500, detail=str(e))
 
+@app.post("/generate_music_form")
+async def generate_music_form(
+    audio_duration: int = Form(default=-1),
+    genre: str = Form(default=""),
+    infer_step: int = Form(default=27),
+    lyrics: str = Form(default=""),
+    guidance_scale: float = Form(default=15.0),
+    scheduler_type: str = Form(default="euler"),
+    cfg_type: str = Form(default="apg"),
+    omega_scale: float = Form(default=10.0),
+    guidance_interval: float = Form(default=0.5),
+    guidance_interval_decay: float = Form(default=0.0),
+    min_guidance_scale: float = Form(default=3.0),
+    guidance_scale_text: float = Form(default=0.0),
+    guidance_scale_lyric: float = Form(default=0.0),
+    format: str = Form(default="wav")
+):
+    """
+    music.pyからのformデータリクエストを処理する専用エンドポイント
+    レガシー互換性のため、パイプラインが初期化されていない場合は自動初期化する
+    """
+    try:
+        # レガシー互換性：パイプラインが初期化されていない場合は自動初期化
+        if model_demo is None:
+            print("Pipeline not initialized. Auto-initializing for legacy compatibility...")
+            try:
+                initialize_pipeline()
+                print("Pipeline auto-initialized successfully")
+            except Exception as init_error:
+                print(f"Failed to auto-initialize pipeline: {init_error}")
+                raise HTTPException(status_code=500, detail=f"Pipeline initialization failed: {str(init_error)}")
+        
+        print(f"=== Form data received ===")
+        print(f"audio_duration: {audio_duration}")
+        print(f"genre: {genre}")
+        print(f"infer_step: {infer_step}")
+        print(f"lyrics: {lyrics[:100]}..." if len(lyrics) > 100 else f"lyrics: {lyrics}")
+        print(f"guidance_scale: {guidance_scale}")
+        print(f"scheduler_type: {scheduler_type}")
+        print(f"cfg_type: {cfg_type}")
+        print(f"omega_scale: {omega_scale}")
+        
+        # 直接音楽生成を実行（ファイル保存なし）
+        # GenerateMusicRequestのデフォルト値を使用
+        request_obj = GenerateMusicRequest(
+            format=format,
+            audio_duration=audio_duration,
+            prompt=genre,  # genreをpromptとして使用
+            lyrics=lyrics,
+            infer_step=infer_step,
+            guidance_scale=guidance_scale,
+            scheduler_type=scheduler_type,
+            cfg_type=cfg_type,
+            omega_scale=omega_scale,
+            guidance_interval=guidance_interval,
+            guidance_interval_decay=guidance_interval_decay,
+            min_guidance_scale=min_guidance_scale,
+            guidance_scale_text=guidance_scale_text,
+            guidance_scale_lyric=guidance_scale_lyric
+        )
+        
+        # メモリクリア（CUDA out of memory対策）
+        import torch
+        if torch.cuda.is_available():
+            torch.cuda.empty_cache()
+            print(f"CUDA memory before generation: {torch.cuda.memory_allocated() / 1024**3:.2f} GB")
+        
+        results = model_demo(
+            format=request_obj.format,
+            audio_duration=request_obj.audio_duration,
+            prompt=request_obj.prompt,
+            lyrics=request_obj.lyrics,
+            infer_step=request_obj.infer_step,
+            guidance_scale=request_obj.guidance_scale,
+            scheduler_type=request_obj.scheduler_type,
+            cfg_type=request_obj.cfg_type,
+            omega_scale=request_obj.omega_scale,
+            manual_seeds=request_obj.manual_seeds,
+            guidance_interval=request_obj.guidance_interval,
+            guidance_interval_decay=request_obj.guidance_interval_decay,
+            min_guidance_scale=request_obj.min_guidance_scale,
+            use_erg_tag=request_obj.use_erg_tag,
+            use_erg_lyric=request_obj.use_erg_lyric,
+            use_erg_diffusion=request_obj.use_erg_diffusion,
+            oss_steps=request_obj.oss_steps,
+            guidance_scale_text=request_obj.guidance_scale_text,
+            guidance_scale_lyric=request_obj.guidance_scale_lyric,
+            audio2audio_enable=request_obj.audio2audio_enable,
+            ref_audio_strength=request_obj.ref_audio_strength,
+            ref_audio_input=request_obj.ref_audio_input,
+            lora_name_or_path=request_obj.lora_name_or_path,
+            lora_weight=request_obj.lora_weight,
+            return_audio_data=True  # 音楽データを直接返す
+        )
+        
+        # 生成後のメモリクリア
+        if torch.cuda.is_available():
+            torch.cuda.empty_cache()
+            print(f"CUDA memory after generation: {torch.cuda.memory_allocated() / 1024**3:.2f} GB")
+        
+        # resultsから音楽データを取得
+        print(f"=== Processing results ===")
+        print(f"Results type: {type(results)}")
+        print(f"Results length: {len(results) if isinstance(results, (list, tuple)) else 'N/A'}")
+        
+        if isinstance(results, (list, tuple)) and len(results) > 0:
+            audio_data_dict = results[0]  # 最初の音楽データを取得
+            print(f"Audio data dict type: {type(audio_data_dict)}")
+            print(f"Audio data dict keys: {list(audio_data_dict.keys()) if isinstance(audio_data_dict, dict) else 'Not dict'}")
+        else:
+            audio_data_dict = results
+            print(f"Audio data dict type (direct): {type(audio_data_dict)}")
+            print(f"Audio data dict keys (direct): {list(audio_data_dict.keys()) if isinstance(audio_data_dict, dict) else 'Not dict'}")
+        
+        # 音楽データをバイト形式に変換
+        try:
+            audio_tensor = audio_data_dict['audio']
+            sample_rate = audio_data_dict['sample_rate']
+            format_type = audio_data_dict['format']
+            
+            print(f"Audio tensor shape: {audio_tensor.shape if hasattr(audio_tensor, 'shape') else 'No shape'}")
+            print(f"Sample rate: {sample_rate}")
+            print(f"Format type: {format_type}")
+        except Exception as extract_error:
+            print(f"Error extracting audio data: {extract_error}")
+            raise HTTPException(status_code=500, detail=f"Failed to extract audio data: {str(extract_error)}")
+        
+        # PyTorchテンソルをバイト形式に変換
+        try:
+            import io
+            import torchaudio
+            
+            buffer = io.BytesIO()
+            backend = "soundfile"
+            if format_type == "ogg":
+                backend = "sox"
+            
+            print(f"Converting audio with backend: {backend}")
+            torchaudio.save(
+                buffer, 
+                audio_tensor, 
+                sample_rate=sample_rate, 
+                format=format_type, 
+                backend=backend
+            )
+            audio_bytes = buffer.getvalue()
+            buffer.close()
+            
+            print(f"Audio bytes length: {len(audio_bytes)}")
+        except Exception as convert_error:
+            print(f"Error converting audio to bytes: {convert_error}")
+            raise HTTPException(status_code=500, detail=f"Failed to convert audio: {str(convert_error)}")
+        
+        # Content-Typeを設定
+        content_type = "audio/wav"  # デフォルト
+        if format_type.lower() == 'mp3':
+            content_type = "audio/mpeg"
+        elif format_type.lower() == 'wav':
+            content_type = "audio/wav"
+        
+        # ファイル名の生成
+        filename = f"generated_music_{int(time.time())}.{format_type}"
+        
+        return Response(
+            content=audio_bytes,
+            media_type=content_type,
+            headers={
+                "Content-Disposition": f'attachment; filename="{filename}"',
+                "Content-Length": str(len(audio_bytes))
+            }
+        )
+            
+    except Exception as e:
+        print(f"Form data generation error: {e}")
+        import traceback
+        print(f"Full traceback: {traceback.format_exc()}")
+        raise HTTPException(status_code=500, detail=f"Internal server error: {str(e)}")
+
+# ...existing code...
+
+
 if __name__ == "__main__":
     import argparse
     
-    parser = argparse.ArgumentParser(description="ACE-Step Gradio Compatible API Server")
-    parser.add_argument("--port", type=int, default=8019, help="Port to run the server on")
-    parser.add_argument("--host", type=str, default="0.0.0.0", help="Host to run the server on")
-    parser.add_argument("--checkpoint_path", type=str, default="", help="Path to checkpoint")
-    parser.add_argument("--device_id", type=int, default=0, help="CUDA device ID")
-    parser.add_argument("--bf16", action="store_true", default=True, help="Use bfloat16")
-    parser.add_argument("--torch_compile", action="store_true", default=False, help="Use torch.compile")
-    parser.add_argument("--cpu_offload", action="store_true", default=False, help="Use CPU offloading")
-    parser.add_argument("--overlapped_decode", action="store_true", default=False, help="Use overlapped decoding")
+    parser = argparse.ArgumentParser(description="ACE-Step Direct API Server")
+    parser.add_argument("--host", type=str, default="127.0.0.1", help="Host address")
+    parser.add_argument("--port", type=int, default=8019, help="Port number")
+    parser.add_argument("--workers", type=int, default=1, help="Number of workers")
+    parser.add_argument("--reload", action="store_true", help="Enable auto-reload")
     
     args = parser.parse_args()
     
-    # 起動時にパイプラインを初期化
-    print("Initializing pipeline...")
-    initialize_pipeline(
-        checkpoint_path=args.checkpoint_path,
-        device_id=args.device_id,
-        bf16=args.bf16,
-        torch_compile=args.torch_compile,
-        cpu_offload=args.cpu_offload,
-        overlapped_decode=args.overlapped_decode
+    uvicorn.run(
+        "gradio_compatible_api:app",
+        host=args.host,
+        port=args.port,
+        workers=args.workers,
+        reload=args.reload
     )
-    print("Pipeline initialized successfully!")
-    
-    # サーバー起動
-    uvicorn.run(app, host=args.host, port=args.port)
