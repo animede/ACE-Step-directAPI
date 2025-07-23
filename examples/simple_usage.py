@@ -90,7 +90,7 @@ def generate_music_async():
     # Request payload
     payload = {
         "format": "mp3",
-        "audio_duration": 20.0,
+        "audio_duration": 100.0,
         "prompt": "peaceful classical piano melody",
         "lyrics": "",
         "infer_step": 15,

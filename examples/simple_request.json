@@ -1,0 +1,6 @@
+{
+  "audio_duration": 3.0,
+  "prompt": "simple test",
+  "lyrics": "test",
+  "infer_step": 10
+}

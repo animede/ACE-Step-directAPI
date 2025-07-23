@@ -123,6 +123,48 @@ python test_upload_direct_mode_no_file_save.py
 python test_comprehensive_direct.py
 ```
 
+## 🔄 Legacy Compatibility
+
+**ACE-Step-directAPI is fully backward compatible with all original ACE-Step samples and documentation!**
+
+### Using Original ACE-Step Samples
+
+All samples from the original ACE-Step repository work without changes:
+
+```bash
+# Run original async examples
+python examples/example_async_simple.py
+python examples/examples_gradio_api.py
+
+# Run original tests
+python tests/test_gradio_compatible_api.py
+python tests/test_mp3_upload_api.py
+bash tests/test_mp3_upload_curl.sh
+```
+
+### Legacy Documentation
+
+Original ACE-Step documentation is available in `docs/legacy/`:
+- `README_GRADIO_COMPATIBLE_API.md` - Gradio API documentation
+- `README_ASYNC_API.md` - Async API documentation  
+- `README_MP3_UPLOAD_API.md` - MP3 upload API documentation
+- `QUICKSTART_GRADIO_API.md` - Quick start guide
+
+### Migration Guide
+
+**No migration needed!** Your existing code will continue to work.
+
+To use new Direct Mode features, simply change the endpoint:
+```python
+# Old (still works)
+response = requests.post('http://localhost:8019/generate_music', json=data)
+
+# New Direct Mode
+response = requests.post('http://localhost:8019/generate_music_direct', json=data)
+```
+
+For more details, see `docs/LEGACY_COMPATIBILITY.md`.
+
 ## 📈 Performance Comparison
 
 | Mode | Disk I/O | Memory Usage | Response Time | File Management |

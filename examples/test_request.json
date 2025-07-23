@@ -1,0 +1,22 @@
+{
+  "audio_duration": 5.0,
+  "prompt": "test music, upbeat, energetic",
+  "lyrics": "[verse]\nTest lyrics for API testing\n[chorus]\nGenerate music with AI",
+  "infer_step": 20,
+  "guidance_scale": 10.0,
+  "guidance_scale_text": 0.0,
+  "guidance_scale_lyric": 0.0,
+  "scheduler_type": "euler",
+  "cfg_type": "apg",
+  "omega_scale": 8.0,
+  "manual_seeds": null,
+  "guidance_interval": 0.5,
+  "guidance_interval_decay": 0.0,
+  "min_guidance_scale": 3.0,
+  "use_erg_tag": true,
+  "use_erg_lyric": true,
+  "use_erg_diffusion": true,
+  "oss_steps": null,
+  "audio2audio_enable": false,
+  "ref_audio_strength": 0.5
+}
